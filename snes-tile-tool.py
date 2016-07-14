@@ -45,6 +45,12 @@ def mirrorV( rawTile, stride ):
     tmp = [ rawTile[ i : i+stride ] for i in range( 0, len( rawTile ), stride ) ]
     return "".join( reversed( tmp ) )
 
+def toBytes( tile ):
+    try:
+        return tile.tobytes()
+    except AttributeError:
+        return tile.tostring()
+
 def process( infile, bpp, tilesize, optimizeDupes, optimizeMirrors, directSelect, mode7 ):
     pilImage = Image.open( infile )
 
@@ -89,7 +95,7 @@ def process( infile, bpp, tilesize, optimizeDupes, optimizeMirrors, directSelect
                 # Calculate the 8-bit direct select RGB value from the input.
                 rawTile = rgb8( tile )
             else:
-                rawTile = tile.tostring()
+                rawTile = toBytes( tile )
 
             assert len( rawTile ) == tilesize[0]*tilesize[1]
 
@@ -153,15 +159,16 @@ def process( infile, bpp, tilesize, optimizeDupes, optimizeMirrors, directSelect
     snesPalette = None
     if not directSelect:
         snesPalette = []
-        palette = pilImage.palette.palette
+        palette = pilImage.getpalette()
         paletteLen = len( palette )
-        # Restrict length based on current bpp.
+        # Restrict length based on current bpp. Also never output more than 256
+        # palette entries.
         # \todo Command line option for restricting the size further.
-        paletteLen = min( paletteLen, 3 * 8 * 2**bpp )
+        paletteLen = min( paletteLen, 3 * 8 * 2**bpp, 3*256 )
         for i in range( 0, paletteLen, 3 ):
             snesRgb = reduce(
                 lambda x, y: ( x << 5 ) | y,
-                reversed( map( lambda x: ord( x )//8, palette[ i:i+3 ] ) )
+                reversed( map( lambda x: x//8, palette[ i:i+3 ] ) )
             )
             snesPalette.append( snesRgb )
 
