@@ -98,9 +98,9 @@ def process( infile, bpp, tilesize, optimizeDupes, optimizeMirrors, directSelect
     screenSize = pilImage.size
     if screenwise:
         screenSize = 32*tilesize[0], 32*tilesize[1]
-        if pilImage.size[0] % ( screenSize[0] ) != 0:
+        if pilImage.size[0] % screenSize[0] != 0:
             raise Error( "image width must be a multiple of screen width ({})".format( screenSize[0] ) )
-        if pilImage.size[1] % ( screenSize[1] ) != 0:
+        if pilImage.size[1] % screenSize[1] != 0:
             raise Error( "image height must be a multiple of screen height ({})".format( screenSize[1] ) )
 
     mapSizeScreens = map( lambda x: x[0]//x[1], zip( pilImage.size, screenSize ) )
