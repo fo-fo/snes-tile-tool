@@ -22,16 +22,33 @@ def unreachable():
 def rgb8( image ):
     image = image.convert( "RGB" )
     pixels = image.load()
+
     result = ""
+    rOnes, gOnes, bOnes = 0, 0, 0
     for j in range( image.size[1] ):
         for i in range( image.size[0] ):
             rgbIn = pixels[ i, j ]
-            # Format is: bbgggrrr
-            # \todo One more bit in each component can be defined per-tile.
-            #       Should figure out the best match here (8 possibilities)
-            rOut = rgbIn[0]//32; gOut = rgbIn[1]//32; bOut = rgbIn[2]//64
-            result += chr( bOut << 6 | gOut << 3 | rOut )
-    return result
+            # Format (in tile data) is: bbgggrrr
+            # With the extra LSBs (capitalized): bbBgggGrrrR
+            rOut = rgbIn[0]//16
+            gOut = rgbIn[1]//16
+            bOut = rgbIn[2]//32
+            # Count the ones in the LSBs to figure out which values to use in
+            # the screen data.
+            # \todo All pixels with CHR data 0 map to transparent, regardless
+            #       of the LSBs in the screen data. Leave those pixels out of
+            #       these calculations?
+            rOnes += rOut & 1; gOnes += gOut & 1; bOnes += bOut & 1
+            result += chr( ( bOut//2 ) << 6 | ( gOut//2 ) << 3 | ( rOut//2 ) )
+
+    numPixels = image.size[0] * image.size[1]
+    # If more ones than zeros, use 1. (0 wins ties.)
+    lsbR = 1 if rOnes > numPixels//2 else 0
+    lsbG = 1 if gOnes > numPixels//2 else 0
+    lsbB = 1 if bOnes > numPixels//2 else 0
+
+    # Return the tile and the "palette number" (0..7) for Direct Select.
+    return result, lsbB << 2 | lsbG << 1 | lsbR
 
 def mirrorH( rawTile, stride ):
     assert len( rawTile ) % stride == 0
@@ -93,7 +110,7 @@ def process( infile, bpp, tilesize, optimizeDupes, optimizeMirrors, directSelect
 
             if directSelect:
                 # Calculate the 8-bit direct select RGB value from the input.
-                rawTile = rgb8( tile )
+                rawTile, rgbLsb = rgb8( tile )
             else:
                 rawTile = toBytes( tile )
 
@@ -101,7 +118,9 @@ def process( infile, bpp, tilesize, optimizeDupes, optimizeMirrors, directSelect
 
             # Figure out the palette number (0..7) based on the tile's pixels.
             paletteNum = None
-            if not directSelect:
+            if directSelect:
+                paletteNum = rgbLsb
+            else:
                 warned = False
                 for p in rawTile:
                     pixel = ord( p )
