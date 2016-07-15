@@ -68,7 +68,8 @@ def toBytes( tile ):
     except AttributeError:
         return tile.tostring()
 
-def process( infile, bpp, tilesize, optimizeDupes, optimizeMirrors, directSelect, mode7 ):
+def process( infile, bpp, tilesize, optimizeDupes, optimizeMirrors, directSelect,
+             mode7, screenwise ):
     pilImage = Image.open( infile )
 
     if mode7:
@@ -93,7 +94,17 @@ def process( infile, bpp, tilesize, optimizeDupes, optimizeMirrors, directSelect
     if pilImage.size[1] % tilesize[1] != 0:
         raise Error( "image height must be a multiple of tile height ({})".format( tilesize[1] ) )
 
-    mapSize = map( lambda x: x[0]//x[1], zip( pilImage.size, tilesize ) )
+    # Default to considering the whole image a screen.
+    screenSize = pilImage.size
+    if screenwise:
+        screenSize = 32*tilesize[0], 32*tilesize[1]
+        if pilImage.size[0] % ( screenSize[0] ) != 0:
+            raise Error( "image width must be a multiple of screen width ({})".format( screenSize[0] ) )
+        if pilImage.size[1] % ( screenSize[1] ) != 0:
+            raise Error( "image height must be a multiple of screen height ({})".format( screenSize[1] ) )
+
+    mapSizeScreens = map( lambda x: x[0]//x[1], zip( pilImage.size, screenSize ) )
+    screenSizeTiles = map( lambda x: x[0]//x[1], zip( screenSize, tilesize ) )
 
     # AND mask for masking out the palette number from a pixel.
     mask = ( 1 << bpp ) - 1
@@ -102,77 +113,79 @@ def process( infile, bpp, tilesize, optimizeDupes, optimizeMirrors, directSelect
     rawTiles = []
     tilemap = []
     optimizedTileIndex = {}
-    for j in range( mapSize[1] ):
-        for i in range( mapSize[0] ):
-            x = i*tilesize[0]
-            y = j*tilesize[1]
-            tile = pilImage.crop( ( x, y, x+tilesize[0], y+tilesize[1] ) )
+    for sj in range( mapSizeScreens[1] ):
+        for si in range( mapSizeScreens[0] ):
+            for j in range( screenSizeTiles[1] ):
+                for i in range( screenSizeTiles[0] ):
+                    x = si*screenSize[0] + i*tilesize[0]
+                    y = sj*screenSize[1] + j*tilesize[1]
+                    tile = pilImage.crop( ( x, y, x+tilesize[0], y+tilesize[1] ) )
 
-            if directSelect:
-                # Calculate the 8-bit direct select RGB value from the input.
-                rawTile, rgbLsb = rgb8( tile )
-            else:
-                rawTile = toBytes( tile )
+                    if directSelect:
+                        # Calculate the 8-bit direct select RGB value from the input.
+                        rawTile, rgbLsb = rgb8( tile )
+                    else:
+                        rawTile = toBytes( tile )
 
-            assert len( rawTile ) == tilesize[0]*tilesize[1]
+                    assert len( rawTile ) == tilesize[0]*tilesize[1]
 
-            # Figure out the palette number (0..7) based on the tile's pixels.
-            paletteNum = None
-            if directSelect:
-                paletteNum = rgbLsb
-            else:
-                warned = False
-                for p in rawTile:
-                    pixel = ord( p )
-                    # If color index 0 is used, the palette doesn't matter, since
-                    # it's always transparent.
-                    if pixel & mask == 0: continue
-                    # \note This is always 0 for bpp==8.
-                    pixelPalette = pixel >> bpp
-                    # Check for violations.
-                    if not warned and paletteNum is not None and paletteNum != pixelPalette:
-                        warn( "more than one palette used in the tile at ({}, {})".format( x, y ) )
-                        warned = True
-                    paletteNum = pixelPalette
+                    # Figure out the palette number (0..7) based on the tile's pixels.
+                    paletteNum = None
+                    if directSelect:
+                        paletteNum = rgbLsb
+                    else:
+                        warned = False
+                        for p in rawTile:
+                            pixel = ord( p )
+                            # If color index 0 is used, the palette doesn't matter, since
+                            # it's always transparent.
+                            if pixel & mask == 0: continue
+                            # \note This is always 0 for bpp==8.
+                            pixelPalette = pixel >> bpp
+                            # Check for violations.
+                            if not warned and paletteNum is not None and paletteNum != pixelPalette:
+                                warn( "more than one palette used in the tile at ({}, {})".format( x, y ) )
+                                warned = True
+                            paletteNum = pixelPalette
 
-            # Can be None if tile was entirely transparent.
-            if paletteNum is None: paletteNum = 0
-            paletteNum &= 7
+                    # Can be None if tile was entirely transparent.
+                    if paletteNum is None: paletteNum = 0
+                    paletteNum &= 7
 
-            # Mask out the palette number.
-            rawTile = "".join( map( lambda x: chr( ord( x ) & mask ), rawTile ) )
-            # Generate mirrored versions.
-            rawTileH = mirrorH( rawTile, tilesize[0] )
-            rawTileV = mirrorV( rawTile, tilesize[0] )
-            rawTileHV = mirrorV( rawTileH, tilesize[0] )
+                    # Mask out the palette number.
+                    rawTile = "".join( map( lambda x: chr( ord( x ) & mask ), rawTile ) )
+                    # Generate mirrored versions.
+                    rawTileH = mirrorH( rawTile, tilesize[0] )
+                    rawTileV = mirrorV( rawTile, tilesize[0] )
+                    rawTileHV = mirrorV( rawTileH, tilesize[0] )
 
-            flipFlags = 0
-            if optimizeDupes:
-                canOptimize = False
-                if optimizeMirrors:
-                    for candidate, flags in zip(
-                        ( rawTileH, rawTileV, rawTileHV ),
-                        ( 0b01, 0b10, 0b11 )
-                    ):
-                        if candidate in optimizedTileIndex:
-                            canOptimize = True; flipFlags = flags
-                            tileIndex = optimizedTileIndex[ candidate ]
-                            break
-                if rawTile in optimizedTileIndex:
-                    canOptimize = True; flipFlags = 0
-                    tileIndex = optimizedTileIndex[ rawTile ]
-                if not canOptimize:
-                    tileIndex = len( rawTiles )
-                    optimizedTileIndex[ rawTile ] = tileIndex
-                    rawTiles.append( rawTile )
-            else:
-                rawTiles.append( rawTile )
-                tileIndex = j*mapSize[0] + i
+                    flipFlags = 0
+                    if optimizeDupes:
+                        canOptimize = False
+                        if optimizeMirrors:
+                            for candidate, flags in zip(
+                                ( rawTileH, rawTileV, rawTileHV ),
+                                ( 0b01, 0b10, 0b11 )
+                            ):
+                                if candidate in optimizedTileIndex:
+                                    canOptimize = True; flipFlags = flags
+                                    tileIndex = optimizedTileIndex[ candidate ]
+                                    break
+                        if rawTile in optimizedTileIndex:
+                            canOptimize = True; flipFlags = 0
+                            tileIndex = optimizedTileIndex[ rawTile ]
+                        if not canOptimize:
+                            tileIndex = len( rawTiles )
+                            optimizedTileIndex[ rawTile ] = tileIndex
+                            rawTiles.append( rawTile )
+                    else:
+                        tileIndex = len( rawTiles )
+                        rawTiles.append( rawTile )
 
-            # \todo Check if ran over 1024 8x8 tiles (or 256 16x16 tiles,
-            #       or 256 tiles for Mode 7)
+                    # \todo Check if ran over 1024 8x8 tiles (or 256 16x16 tiles,
+                    #       or 256 tiles for Mode 7)
 
-            tilemap.append( ( tileIndex, paletteNum, flipFlags ) )
+                    tilemap.append( ( tileIndex, paletteNum, flipFlags ) )
 
     # Generate palette.
     snesPalette = None
@@ -302,6 +315,8 @@ def main():
         choices=[ 2, 4, 8 ], help="bits per pixel" )
     argParser.add_argument( "-s", "--tilesize", default="8x8",
         choices=[ "8x8", "16x16", ], help="tile size" )
+    argParser.add_argument( "-w", "--screenwise", action="store_true",
+        help="import as 32x32 tile screens")
     argParser.add_argument( "-d", "--directselect", action="store_true",
         help="use CG Direct Select (8 bpp only)")
     argParser.add_argument( "-m7", "--mode7", action="store_true",
@@ -320,7 +335,7 @@ def main():
     try:
         results = process( args.infile, args.bpp, tilesize,
             args.optimizedupes, args.optimizemirrors, args.directselect,
-            args.mode7 )
+            args.mode7, args.screenwise )
         writeOutput( results, args.outprefix, args.bpp, tilesize, args.mode7 )
     except Error as e:
         print "error: {}".format( e )
