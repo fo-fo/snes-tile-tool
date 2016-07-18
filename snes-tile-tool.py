@@ -161,20 +161,20 @@ def process( infile, bpp, tilesize, optimizeDupes, optimizeMirrors, directSelect
 
                     flipFlags = 0
                     if optimizeDupes:
-                        canOptimize = False
+                        candidates = [ ( rawTile, 0b00 ) ]
+
                         if optimizeMirrors:
-                            for candidate, flags in zip(
+                            candidates.extend( zip(
                                 ( rawTileH, rawTileV, rawTileHV ),
                                 ( 0b01, 0b10, 0b11 )
-                            ):
-                                if candidate in optimizedTileIndex:
-                                    canOptimize = True; flipFlags = flags
-                                    tileIndex = optimizedTileIndex[ candidate ]
-                                    break
-                        if rawTile in optimizedTileIndex:
-                            canOptimize = True; flipFlags = 0
-                            tileIndex = optimizedTileIndex[ rawTile ]
-                        if not canOptimize:
+                            ) )
+
+                        for tile, flags in candidates:
+                            if tile in optimizedTileIndex:
+                                flipFlags = flags
+                                tileIndex = optimizedTileIndex[ tile ]
+                                break
+                        else:
                             tileIndex = len( rawTiles )
                             optimizedTileIndex[ rawTile ] = tileIndex
                             rawTiles.append( rawTile )
